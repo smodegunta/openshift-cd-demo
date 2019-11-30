@@ -1,0 +1,90 @@
+def mvnCmd = "mvn -s configuration/cicd-settings-nexus3.xml"
+
+pipeline {
+  agent {
+    label 'maven'
+  }
+  stages {
+    stage('Build App') {
+      steps {
+        git branch: 'develop', url: 'https://github.com/brimma-tech/rialto.git'
+        dir('rialto-service') {
+          sh "${mvnCmd} install -DskipTests=true"
+        }
+      }
+    }
+    stage('Test') {
+      steps {
+        dir('rialto-service') {
+          sh "${mvnCmd} test"
+          step([$class: 'JUnitResultArchiver', testResults: '**/target/surefire-reports/TEST-*.xml'])
+        }
+      }
+    }
+    stage('Code Analysis') {
+      steps {
+        script {
+          dir('rialto-service') {
+            sh "${mvnCmd} sonar:sonar -Dsonar.host.url=http://sonarqube:9000 -DskipTests=true"
+          }
+        }
+      }
+    }
+    stage('Archive App') {
+      steps {
+        dir('rialto-service') {
+          sh "${mvnCmd} deploy -DskipTests=true -P nexus3"
+        }
+      }
+    }
+    stage('Build Image') {
+      steps {
+        script {
+          openshift.withCluster() {
+            openshift.withProject(env.DEV_PROJECT) {
+              openshift.selector("bc", "openshift/java:8").related("builds")
+            }
+          }
+        }
+      }
+    }
+    stage('Deploy DEV') {
+      steps {
+        script {
+          openshift.withCluster() {
+            openshift.withProject(env.DEV_PROJECT) {
+              openshift.selector("dc", "rialto").rollout().latest();
+            }
+          }
+        }
+      }
+    }
+    stage('Promote to STAGE?') {
+      agent {
+        label 'skopeo'
+      }
+      steps {
+        timeout(time:15, unit:'MINUTES') {
+            input message: "Promote to STAGE?", ok: "Promote"
+        }
+
+        script {
+          openshift.withCluster() {
+            openshift.tag("${env.DEV_PROJECT}/rialto:latest", "${env.STAGE_PROJECT}/rialto:stage")
+          }
+        }
+      }
+    }
+    stage('Deploy STAGE') {
+      steps {
+        script {
+          openshift.withCluster() {
+            openshift.withProject(env.STAGE_PROJECT) {
+              openshift.selector("dc", "rialto").rollout().latest();
+            }
+          }
+        }
+      }
+    }
+  }
+}
