@@ -74,10 +74,10 @@ objects:
     triggers:
       - type: GitHub
         github:
-          secret: ${WEBHOOK_SECRET}
+          secret: srikanth
       - type: Generic
         generic:
-          secret: ${WEBHOOK_SECRET}
+          secret: srikanth
     runPolicy: Serial
     source:
       type: None
@@ -88,8 +88,6 @@ objects:
           value: ${DEV_PROJECT}
         - name: STAGE_PROJECT
           value: ${STAGE_PROJECT}
-        - name: ENABLE_QUAY
-          value: ${ENABLE_QUAY}
         jenkinsfile: |-
           def mvnCmd = "mvn -s configuration/cicd-settings-nexus3.xml"
 
@@ -117,14 +115,8 @@ objects:
                   }
                 }
               }
-              stage('Archive App') {
-                steps {
-                  sh "${mvnCmd} deploy -DskipTests=true -P nexus3"
-                }
-              }
               stage('Build Image') {
                 steps {
-                  sh "cp target/openshift-rialto-service.war target/ROOT.war"
                   script {
                     openshift.withCluster() {
                       openshift.withProject(env.DEV_PROJECT) {
@@ -212,7 +204,7 @@ objects:
             <resourceRequestCpu>200m</resourceRequestCpu>
             <resourceRequestMemory>512Mi</resourceRequestMemory>
             <resourceLimitCpu>2</resourceLimitCpu>
-            <resourceLimitMemory>4Gi</resourceLimitMemory>
+            <resourceLimitMemory>2Gi</resourceLimitMemory>
             <envVars/>
           </org.csanchez.jenkins.plugins.kubernetes.ContainerTemplate>
         </containers>
@@ -253,6 +245,16 @@ objects:
         <annotations/>
         <imagePullSecrets/>
       </org.csanchez.jenkins.plugins.kubernetes.PodTemplate>
+# github credentials secret
+- apiVersion: v1
+  data:
+    password: YVBSSUxAMTk4Nw==
+    username: c21vZGVndW50YQ==
+  kind: Secret
+  metadata:
+    name: github
+  type: kubernetes.io/basic-auth
+
 # Setup Demo
 - apiVersion: batch/v1
   kind: Job
@@ -332,26 +334,10 @@ objects:
             sleep 5
 
             if [ "${EPHEMERAL}" == "true" ] ; then
-              oc new-app -f https://raw.githubusercontent.com/siamaksade/sonarqube/master/sonarqube-template.yml --param=SONARQUBE_MEMORY_LIMIT=6Gi
+              oc new-app -f https://raw.githubusercontent.com/siamaksade/sonarqube/master/sonarqube-template.yml --param=SONARQUBE_MEMORY_LIMIT=2Gi
             else
-              oc new-app -f https://raw.githubusercontent.com/smodegunta/sonarqube/master/sonarqube-persistent-template.yml --param=SONARQUBE_MEMORY_LIMIT=6Gi
+              oc new-app -f https://raw.githubusercontent.com/smodegunta/sonarqube/master/sonarqube-persistent-template.yml --param=SONARQUBE_MEMORY_LIMIT=2Gi
             fi
-
-            if [ "${DEPLOY_CHE}" == "true" ] ; then
-              oc process -f https://raw.githubusercontent.com/minishift/minishift/master/addons/che/templates/che-workspace-service-account.yaml \
-                  --param SERVICE_ACCOUNT_NAMESPACE=$CICD_NAMESPACE --param=SERVICE_ACCOUNT_NAME=che-workspace | oc create -f -
-
-              oc process -f https://raw.githubusercontent.com/minishift/minishift/master/addons/che/templates/che-server-template.yaml \
-                --param ROUTING_SUFFIX=$HOSTNAME \
-                --param CHE_MULTIUSER=false \
-                --param CHE_VERSION="6.19.0" \
-                --param CHE_INFRA_OPENSHIFT_PROJECT=$CICD_NAMESPACE \
-                --param CHE_INFRA_KUBERNETES_SERVICE__ACCOUNT__NAME=che-workspace | oc create -f -
-
-              oc set resources dc/che --limits=cpu=1,memory=2Gi --requests=cpu=200m,memory=512Mi
-            fi
-
-            oc set resources dc/nexus --requests=cpu=200m,memory=1Gi --limits=cpu=2,memory=4Gi 
 
           image: openshift/origin:v3.11
           name: cicd-demo-installer-job
