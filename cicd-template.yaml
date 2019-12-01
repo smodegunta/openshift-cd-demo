@@ -10,6 +10,10 @@ metadata:
   name: cicd
 message: "Use the following credentials for login:\nJenkins: use your OpenShift credentials\nNexus: admin/admin123\nSonarQube: admin/admin\nGogs Git Server: gogs/gogs"
 parameters:
+- displayName: CICD project name
+  value: cicd
+  name: CICD_NS
+  required: true
 - displayName: DEV project name
   value: dev
   name: DEV_PROJECT
@@ -98,7 +102,7 @@ objects:
             stages {
               stage('Build App') {
                 steps {
-                  git branch: 'refactored', url: 'https://github.com/smodegunta/ider-service.git'
+                  git branch: 'refactored', credentailsId: "${env.CICD_NS}-github", url: 'https://github.com/smodegunta/ider-service.git'
                   sh "${mvnCmd} install -DskipTests=true"
                 }
               }
@@ -283,38 +287,20 @@ objects:
 
             # setup dev env
             oc import-image java8 --from=openshift/java:8 --confirm -n ${DEV_PROJECT} 
+
+            # credential sync up 
+            # https://edekler.nl/container-platform/synchronize-openshift-secrets-with-jenkins/
+            oc label secret github credential.sync.jenkins.openshift.io=true
             
-            if [ "${ENABLE_QUAY}" == "true" ] ; then
-              # cicd
-              oc create secret generic quay-cicd-secret --from-literal="username=${QUAY_USERNAME}" --from-literal="password=${QUAY_PASSWORD}" -n ${CICD_NAMESPACE}
-              oc label secret quay-cicd-secret credential.sync.jenkins.openshift.io=true -n ${CICD_NAMESPACE}
-              
-              # dev
-              oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${DEV_PROJECT}
-              oc new-build --name=rialto-service --image-stream=wildfly:latest --binary=true --push-secret=quay-cicd-secret --to-docker --to='quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest' -n ${DEV_PROJECT}
-              oc new-app --name=rialto-service --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:latest --allow-missing-images -n ${DEV_PROJECT}
-              oc set triggers dc rialto-service --remove-all -n ${DEV_PROJECT}
-              oc patch dc rialto-service -p '{"spec": {"template": {"spec": {"containers": [{"name": "rialto-service", "imagePullPolicy": "Always"}]}}}}' -n ${DEV_PROJECT}
-              oc delete is rialto-service -n ${DEV_PROJECT}
-              oc secrets link default quay-cicd-secret --for=pull -n ${DEV_PROJECT}
-              
-              # stage
-              oc create secret docker-registry quay-cicd-secret --docker-server=quay.io --docker-username="${QUAY_USERNAME}" --docker-password="${QUAY_PASSWORD}" --docker-email=cicd@redhat.com -n ${STAGE_PROJECT}
-              oc new-app --name=rialto-service --docker-image=quay.io/${QUAY_USERNAME}/${QUAY_REPOSITORY}:stage --allow-missing-images -n ${STAGE_PROJECT}
-              oc set triggers dc rialto-service --remove-all -n ${STAGE_PROJECT}
-              oc patch dc rialto-service -p '{"spec": {"template": {"spec": {"containers": [{"name": "rialto-service", "imagePullPolicy": "Always"}]}}}}' -n ${STAGE_PROJECT}
-              oc delete is rialto-service -n ${STAGE_PROJECT}
-              oc secrets link default quay-cicd-secret --for=pull -n ${STAGE_PROJECT}
-            else
-              # dev
-              oc new-build --name=rialto-service --image-stream=wildfly:latest --binary=true -n ${DEV_PROJECT}
-              oc new-app rialto-service:latest --allow-missing-images -n ${DEV_PROJECT}
-              oc set triggers dc -l app=rialto-service --containers=rialto-service --from-image=rialto-service:latest --manual -n ${DEV_PROJECT}
-              
-              # stage
-              oc new-app rialto-service:stage --allow-missing-images -n ${STAGE_PROJECT}
-              oc set triggers dc -l app=rialto-service --containers=rialto-service --from-image=rialto-service:stage --manual -n ${STAGE_PROJECT}
-            fi
+            # dev
+            oc new-build --name=rialto-service --image-stream=java:8 --binary=true -n ${DEV_PROJECT}
+            oc new-app rialto-service:latest --allow-missing-images -n ${DEV_PROJECT}
+            oc set triggers dc -l app=rialto-service --containers=rialto-service --from-image=rialto-service:latest --manual -n ${DEV_PROJECT}
+            
+            # stage
+            oc new-app rialto-service:stage --allow-missing-images -n ${STAGE_PROJECT}
+            oc set triggers dc -l app=rialto-service --containers=rialto-service --from-image=rialto-service:stage --manual -n ${STAGE_PROJECT}
+
             
             # dev project
             oc expose dc/rialto-service --port=8080 -n ${DEV_PROJECT}
